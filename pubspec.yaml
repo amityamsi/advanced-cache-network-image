@@ -1,0 +1,22 @@
+name: advanced_cache_network_image
+description: Advanced Flutter image caching with LRU memory cache, disk cache, download queue and prefetch support.
+version: 0.0.1
+homepage: https://github.com/yourname/advanced_cache_network_image
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.7
+  http: ^1.6.0
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
