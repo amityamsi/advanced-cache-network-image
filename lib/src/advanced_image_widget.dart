@@ -65,12 +65,6 @@ class _AdvancedCacheNetworkImageState extends State<AdvancedCacheNetworkImage> {
       bytes = await loader.loadBytes(widget.url);
 
       /// 1️⃣ Decode small preview
-      final previewCodec = await instantiateImageCodec(
-        bytes!,
-        targetWidth: 40,
-      );
-
-      final previewFrame = await previewCodec.getNextFrame();
 
       previewImage = MemoryImage(bytes!);
 
