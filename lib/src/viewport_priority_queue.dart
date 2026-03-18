@@ -19,8 +19,20 @@ class ViewportPriorityQueue {
 
   /// Maximum number of concurrent tasks allowed.
   ///
-  /// Defaults to `3`.
-  static const int maxConcurrent = 3;
+  /// Defaults to `3`. Can be changed at runtime.
+  static int _maxConcurrent = 3;
+
+  /// Current max concurrent value.
+  static int get maxConcurrent => _maxConcurrent;
+
+  /// Updates the max concurrent task count.
+  ///
+  /// Values less than 1 are ignored.
+  static set maxConcurrent(int value) {
+    if (value < 1) return;
+    _maxConcurrent = value;
+    _run();
+  }
 
   /// Adds a new [task] to the queue.
   ///

@@ -37,4 +37,9 @@ class MemoryCache {
   void clear() {
     _cache.clear();
   }
+
+  /// Removes a specific item from memory cache.
+  void remove(String key) {
+    _cache.remove(key);
+  }
 }

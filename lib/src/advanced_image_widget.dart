@@ -1,32 +1,37 @@
 /// A high-performance Flutter widget for loading and caching network images.
 ///
-/// This widget provides:
+/// ## ✨ Features
 /// - Memory and disk caching support
 /// - Progressive image rendering (preview → full image)
 /// - Custom placeholder and error widgets
+/// - Smooth fade animation between states
 /// - Optional rounded corners
 /// - Image resizing for performance optimization
 ///
-/// Example:
+/// ## 🧠 Behavior
+/// - Displays a placeholder while loading
+/// - Shows a preview image first
+/// - Replaces it with a fully decoded image
+/// - Handles errors gracefully
+///
+/// ## 📦 Example
 /// ```dart
 /// AdvancedCacheNetworkImage(
 ///   url: "https://example.com/image.jpg",
 ///   height: 200,
 ///   fit: BoxFit.cover,
+///   radius: 12,
+///   enableFade: true,
 /// )
 /// ```
 library;
 
-import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:advanced_cache_network_image/advanced_cache_network_image.dart';
 import 'package:flutter/material.dart';
 import 'image_loader.dart';
 
-/// A widget that displays a network image with advanced caching and smooth rendering.
-///
-/// It first shows a preview image and then replaces it with the full-resolution image.
-/// This improves perceived performance in image-heavy UIs like feeds.
 class AdvancedCacheNetworkImage extends StatefulWidget {
   /// The URL of the image to load.
   final String url;
@@ -51,39 +56,52 @@ class AdvancedCacheNetworkImage extends StatefulWidget {
   final double? height;
 
   /// Border radius applied to the image.
-  ///
-  /// Defaults to `0` (no rounding).
   final double radius;
 
   /// Target width for decoding the image.
-  ///
-  /// Helps reduce memory usage for large images.
   final int? targetWidth;
 
   /// Target height for decoding the image.
   final int? targetHeight;
 
   /// Duration for which the image is cached.
-  ///
-  /// If null, a default duration is used internally.
   final Duration? cacheDuration;
 
   /// Whether to use in-memory caching.
-  ///
-  /// Defaults to `true`.
   final bool useMemoryCache;
 
   /// Whether to use disk caching.
-  ///
-  /// Defaults to `true`.
   final bool useDiskCache;
 
-  /// Creates an [AdvancedCacheNetworkImage].
+  /// Whether to animate between placeholder and image.
   ///
-  /// The [url] parameter is required.
+  /// Defaults to `true`.
+  final bool enableFade;
+
+  /// Duration of fade animation.
   ///
-  /// You can customize caching behavior, placeholders,
-  /// error handling, and rendering options.
+  /// Defaults to 300 milliseconds.
+  final Duration fadeDuration;
+
+  /// Builder for rendering the final image.
+  ///
+  /// Gives full control over how the image is displayed.
+  final Widget Function(BuildContext context, ImageProvider image)?
+      imageBuilder;
+
+  /// Builder for loading progress.
+  ///
+  /// Provides download progress (0.0 → 1.0).
+  final Widget Function(BuildContext context, double progress)? progressBuilder;
+
+  /// Optional custom loader for advanced cache/network control.
+  ///
+  /// If not provided, [ImageLoader.shared] is used.
+  final ImageLoader? imageLoader;
+
+  /// Optional cancel token for aborting in-flight requests.
+  final CancelToken? cancelToken;
+
   const AdvancedCacheNetworkImage({
     super.key,
     required this.url,
@@ -98,6 +116,12 @@ class AdvancedCacheNetworkImage extends StatefulWidget {
     this.cacheDuration,
     this.useMemoryCache = true,
     this.useDiskCache = true,
+    this.enableFade = true,
+    this.fadeDuration = const Duration(milliseconds: 300),
+    this.imageBuilder,
+    this.progressBuilder,
+    this.imageLoader,
+    this.cancelToken,
   });
 
   @override
@@ -105,99 +129,122 @@ class AdvancedCacheNetworkImage extends StatefulWidget {
       _AdvancedCacheNetworkImageState();
 }
 
-/// State class responsible for loading and rendering the image.
 class _AdvancedCacheNetworkImageState extends State<AdvancedCacheNetworkImage> {
-  /// Internal image loader responsible for fetching and caching image bytes.
-  final loader = ImageLoader();
-
-  /// Cached file reference (if disk cache is used).
-  File? file;
-
-  /// Indicates whether an error occurred during loading.
+  double progress = 0.0;
   bool isError = false;
-
-  /// Raw image bytes.
   Uint8List? bytes;
-
-  /// Low-resolution preview image.
   ImageProvider? previewImage;
-
-  /// Fully decoded high-resolution image.
   ImageProvider? fullImage;
 
   @override
   void initState() {
     super.initState();
-    load();
+    _loadImage();
   }
 
-  /// Loads the image bytes and performs progressive decoding.
-  ///
-  /// Steps:
-  /// 1. Fetch image bytes
-  /// 2. Show preview image
-  /// 3. Decode full image
-  /// 4. Replace preview with full image
-  Future<void> load() async {
+  Future<void> _loadImage() async {
     try {
-      bytes = await loader.loadBytes(widget.url);
+      final loader = widget.imageLoader ?? ImageLoader.shared;
+      bytes = await loader.loadBytes(
+        widget.url,
+        useMemoryCache: widget.useMemoryCache,
+        useDiskCache: widget.useDiskCache,
+        cacheDuration: widget.cacheDuration,
+        cancelToken: widget.cancelToken,
+        onProgress: (received, total) {
+          if (total != null && total > 0) {
+            progress = received / total;
+          } else {
+            progress = 0;
+          }
 
-      /// Step 1: Create preview image
+          if (mounted) setState(() {});
+        },
+      );
+
+      /// Preview
       previewImage = MemoryImage(bytes!);
 
       if (!mounted) return;
-
       setState(() {});
 
-      /// Step 2: Decode full-resolution image
-      final fullCodec = await instantiateImageCodec(bytes!);
-      await fullCodec.getNextFrame();
+      /// Full decode
+      final codec = await instantiateImageCodec(
+        bytes!,
+        targetWidth: widget.targetWidth,
+        targetHeight: widget.targetHeight,
+      );
+      await codec.getNextFrame();
 
       fullImage = MemoryImage(bytes!);
 
       if (!mounted) return;
-
       setState(() {});
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-
-      setState(() {
-        isError = true;
-      });
+      setState(() => isError = true);
     }
   }
 
-  /// Builds the UI for the image widget.
-  ///
-  /// Handles:
-  /// - Loading state
-  /// - Error state
-  /// - Image rendering with optional radius
   @override
   Widget build(BuildContext context) {
+    Widget content;
+
+    /// 🔴 Error state
     if (isError) {
-      return widget.errorWidget ?? const Icon(Icons.error);
+      content = widget.errorWidget ?? const Center(child: Icon(Icons.error));
     }
 
-    if (bytes == null) {
-      return widget.placeholder ??
-          const Center(child: CircularProgressIndicator());
+    /// ⏳ Loading state (with progress)
+    else if (bytes == null) {
+      if (widget.progressBuilder != null) {
+        content = widget.progressBuilder!(context, progress);
+      } else {
+        content = widget.placeholder ??
+            const Center(child: CircularProgressIndicator());
+      }
     }
 
-    Widget image = Image(
-      image: fullImage ?? previewImage!,
-      fit: widget.fit,
-      width: widget.width,
-      height: widget.height,
-    );
+    /// 🖼 Image state
+    else {
+      final provider = fullImage ?? previewImage!;
 
-    if (widget.radius > 0) {
-      image = ClipRRect(
-        borderRadius: BorderRadius.circular(widget.radius),
-        child: image,
+      if (widget.imageBuilder != null) {
+        content = widget.imageBuilder!(context, provider);
+      } else {
+        content = Image(
+          key: ValueKey(provider),
+          image: provider,
+          fit: widget.fit,
+        );
+      }
+    }
+
+    /// 📏 Size
+    if (widget.width != null || widget.height != null) {
+      content = SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: content,
       );
     }
 
-    return image;
+    /// 🔵 Radius
+    if (widget.radius > 0) {
+      content = ClipRRect(
+        borderRadius: BorderRadius.circular(widget.radius),
+        child: content,
+      );
+    }
+
+    /// ✨ Fade
+    if (widget.enableFade) {
+      content = AnimatedSwitcher(
+        duration: widget.fadeDuration,
+        child: content,
+      );
+    }
+
+    return content;
   }
 }

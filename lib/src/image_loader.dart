@@ -1,63 +1,72 @@
 import 'dart:async';
 import 'dart:io';
-
-import 'package:advanced_cache_network_image/src/viewport_priority_queue.dart';
+import 'dart:typed_data';
 
 import 'memory_cache.dart';
 import 'disk_cache.dart';
 import 'network_fetcher.dart';
+import 'viewport_priority_queue.dart';
 
-import 'dart:typed_data';
-
-/// A high-level image loading manager that handles fetching,
-/// caching, and prioritizing image downloads.
+/// A high-performance image loading manager.
 ///
-/// This class combines:
+/// Features:
 /// - Memory cache (LRU)
 /// - Disk cache
-/// - Network downloading
-/// - Viewport-based priority queue
+/// - Network fetching
+/// - Viewport priority queue
+/// - 🔥 Request deduplication
+/// - 🔥 Shared progress listeners
+/// - 🔥 Cancel support
 ///
-/// It ensures optimal performance for image-heavy UIs like feeds.
+/// Designed for image-heavy UIs like feeds and grids.
 class ImageLoader {
-  /// In-memory cache for storing frequently used images.
-  final MemoryCache memoryCache = MemoryCache();
+  /// Shared loader instance that can be reused across widgets/screens.
+  static final ImageLoader shared = ImageLoader();
 
-  /// Disk cache for persistent image storage.
-  final DiskCache diskCache = DiskCache();
+  /// In-memory cache
+  final MemoryCache memoryCache;
 
-  /// Network handler responsible for downloading images.
-  final NetworkFetcher networkFetcher = NetworkFetcher();
+  /// Disk cache
+  final DiskCache diskCache;
 
-  /// Loads an image and returns it as a cached [File].
-  ///
-  /// This method follows a multi-layer caching strategy:
-  ///
-  /// 1. Check memory cache
-  /// 2. Check disk cache
-  /// 3. Download from network (via priority queue)
-  /// 4. Store in memory and disk cache
-  ///
-  /// Parameters:
-  /// - [url]: Image URL
-  /// - [targetWidth], [targetHeight]: Optional resize hints
-  /// - [cacheDuration]: Expiration duration for disk cache
-  /// - [useMemoryCache]: Enable/disable memory caching
-  /// - [useDiskCache]: Enable/disable disk caching
+  /// Network handler
+  final NetworkFetcher networkFetcher;
+
+  /// 🔥 Tracks ongoing requests (URL → Future)
+  final Map<String, Future<Uint8List>> _ongoingRequests = {};
+
+  /// 🔥 Progress listeners (URL → Listeners)
+  final Map<String, List<void Function(int, int?)>> _progressListeners = {};
+
+  ImageLoader({
+    MemoryCache? memoryCache,
+    DiskCache? diskCache,
+    Duration timeout = const Duration(seconds: 15),
+    int maxRetries = 3,
+    Duration baseDelay = const Duration(milliseconds: 500),
+    int? maxConcurrentDownloads,
+  })  : memoryCache = memoryCache ?? MemoryCache(),
+        diskCache = diskCache ?? DiskCache(),
+        networkFetcher = NetworkFetcher(
+          timeout: timeout,
+          maxRetries: maxRetries,
+          baseDelay: baseDelay,
+        ) {
+    if (maxConcurrentDownloads != null && maxConcurrentDownloads > 0) {
+      ViewportPriorityQueue.maxConcurrent = maxConcurrentDownloads;
+    }
+  }
+
+  /// Loads image as File (disk-backed)
   Future<File> load(
     String url, {
-    int? targetWidth,
-    int? targetHeight,
     Duration? cacheDuration,
     bool useMemoryCache = true,
     bool useDiskCache = true,
   }) async {
-    Uint8List? bytes;
-
-    /// Step 1: MEMORY CACHE
+    /// 1️⃣ MEMORY CACHE
     if (useMemoryCache) {
       final memory = memoryCache.get(url);
-
       if (memory != null) {
         final file = await diskCache.getFile(url);
         await file.writeAsBytes(memory);
@@ -65,95 +74,181 @@ class ImageLoader {
       }
     }
 
-    /// Step 2: DISK CACHE
+    /// 2️⃣ DISK CACHE
     final file = await diskCache.getFile(url);
 
     if (useDiskCache && await file.exists()) {
       if (cacheDuration != null) {
         final modified = await file.lastModified();
 
-        /// Check if cache is still valid
         if (DateTime.now().difference(modified) <= cacheDuration) {
           return file;
         }
 
-        /// Cache expired → delete
         await file.delete();
       } else {
         return file;
       }
     }
 
-    /// Step 3: DOWNLOAD (with viewport priority queue)
+    /// 3️⃣ DOWNLOAD
+    final bytes = await loadBytes(
+      url,
+      cacheDuration: cacheDuration,
+      useMemoryCache: useMemoryCache,
+      useDiskCache: useDiskCache,
+    );
+
+    await file.writeAsBytes(bytes);
+    return file;
+  }
+
+  /// Prefetch image into cache
+  Future<void> prefetch(String url) async {
+    await loadBytes(url);
+  }
+
+  /// Removes a specific URL from cache.
+  Future<void> evict(
+    String url, {
+    bool memory = true,
+    bool disk = true,
+  }) async {
+    if (memory) {
+      memoryCache.remove(url);
+    }
+
+    if (disk) {
+      final file = await diskCache.getFile(url);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    }
+  }
+
+  /// Clears only in-memory cache.
+  void clearMemoryCache() {
+    memoryCache.clear();
+  }
+
+  /// Loads image bytes with full optimization pipeline
+  Future<Uint8List> loadBytes(
+    String url, {
+    void Function(int received, int? total)? onProgress,
+    CancelToken? cancelToken,
+    Duration? cacheDuration,
+    bool useMemoryCache = true,
+    bool useDiskCache = true,
+  }) async {
+    /// 1️⃣ MEMORY CACHE
+    if (useMemoryCache) {
+      final memory = memoryCache.get(url);
+      if (memory != null) {
+        onProgress?.call(memory.length, memory.length);
+        return memory;
+      }
+    }
+
+    /// 2️⃣ DISK CACHE
+    final file = await diskCache.getFile(url);
+    if (useDiskCache && await file.exists()) {
+      bool isValid = true;
+
+      if (cacheDuration != null) {
+        final modified = await file.lastModified();
+        isValid = DateTime.now().difference(modified) <= cacheDuration;
+      }
+
+      if (isValid) {
+        final bytes = await file.readAsBytes();
+        if (useMemoryCache) {
+          memoryCache.set(url, bytes);
+        }
+        onProgress?.call(bytes.length, bytes.length);
+        return bytes;
+      }
+
+      await file.delete();
+    }
+
+    /// 3️⃣ 🔥 REQUEST DEDUPLICATION
+    if (_ongoingRequests.containsKey(url)) {
+      if (onProgress != null) {
+        _progressListeners[url]?.add(onProgress);
+      }
+      return _ongoingRequests[url]!;
+    }
+
+    /// 4️⃣ REGISTER PROGRESS LISTENER
+    if (onProgress != null) {
+      _progressListeners.putIfAbsent(url, () => []);
+      _progressListeners[url]!.add(onProgress);
+    }
+
+    /// 5️⃣ CREATE REQUEST
+    final future = _downloadAndCache(
+      url,
+      cancelToken: cancelToken,
+      useMemoryCache: useMemoryCache,
+      useDiskCache: useDiskCache,
+    );
+
+    _ongoingRequests[url] = future;
+
+    try {
+      return await future;
+    } finally {
+      /// 🔥 CLEANUP
+      _ongoingRequests.remove(url);
+      _progressListeners.remove(url);
+    }
+  }
+
+  /// Internal download handler with:
+  /// - Priority queue
+  /// - Shared progress broadcasting
+  /// - Cancel support
+  Future<Uint8List> _downloadAndCache(
+    String url, {
+    CancelToken? cancelToken,
+    bool useMemoryCache = true,
+    bool useDiskCache = true,
+  }) async {
     final completer = Completer<Uint8List>();
 
     ViewportPriorityQueue.add(() async {
-      final downloaded = await networkFetcher.download(url);
-      completer.complete(downloaded);
+      try {
+        final bytes = await networkFetcher.download(
+          url,
+          cancelToken: cancelToken,
+          onProgress: (received, total) {
+            final listeners = _progressListeners[url];
+            if (listeners != null) {
+              for (final listener in listeners) {
+                listener(received, total);
+              }
+            }
+          },
+        );
+
+        completer.complete(bytes);
+      } catch (e) {
+        completer.completeError(e);
+      }
     });
 
-    bytes = await completer.future;
+    final bytes = await completer.future;
 
-    /// Step 4: STORE IN MEMORY CACHE
+    /// Store in memory
     if (useMemoryCache) {
       memoryCache.set(url, bytes);
     }
 
-    /// Step 5: STORE IN DISK CACHE
-    await file.writeAsBytes(bytes);
-
-    return file;
-  }
-
-  /// Prefetches an image and stores it in cache.
-  ///
-  /// This is useful for:
-  /// - Preloading images before they appear on screen
-  /// - Improving scroll performance in feeds
-  ///
-  /// Example:
-  /// ```dart
-  /// ImageLoader().prefetch("https://example.com/image.jpg");
-  /// ```
-  Future<void> prefetch(String url) async {
-    await load(url);
-  }
-
-  /// Loads image bytes directly.
-  ///
-  /// This method:
-  /// - Checks memory cache first
-  /// - Falls back to disk cache
-  /// - Downloads from network if needed
-  ///
-  /// Unlike [load], this returns raw [Uint8List] instead of a file.
-  Future<Uint8List> loadBytes(String url) async {
-    /// Step 1: MEMORY CACHE
-    final memory = memoryCache.get(url);
-
-    if (memory != null) {
-      return memory;
+    /// Store in disk
+    if (useDiskCache) {
+      final file = await diskCache.getFile(url);
+      await file.writeAsBytes(bytes);
     }
-
-    /// Step 2: DISK CACHE
-    final file = await diskCache.getFile(url);
-
-    if (await file.exists()) {
-      final bytes = await file.readAsBytes();
-
-      memoryCache.set(url, bytes);
-
-      return bytes;
-    }
-
-    /// Step 3: NETWORK DOWNLOAD
-    final bytes = await networkFetcher.download(url);
-
-    /// Store in memory
-    memoryCache.set(url, bytes);
-
-    /// Store on disk
-    await file.writeAsBytes(bytes);
 
     return bytes;
   }

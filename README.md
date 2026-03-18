@@ -1,269 +1,211 @@
 # advanced_cache_network_image
 
-A high-performance Flutter widget for loading and caching network images with advanced optimizations such as **LRU memory cache, disk cache, progressive preview rendering, download queue, and viewport priority loading**.
+Advanced Flutter network image loading with memory + disk cache, request deduplication, progress callbacks, queue-based concurrency, and retry support.
 
-This package is designed for **fast image loading in large feeds**, inspired by techniques used in social media apps.
+## Features
 
----
+- Widget-first API: `AdvancedCacheNetworkImage`
+- Memory caching (`MemoryCache`)
+- Disk caching in temporary directory (`DiskCache`)
+- Request deduplication (same URL shares one in-flight request)
+- Shared progress listeners for duplicate requests
+- Download queue with configurable concurrency (`ViewportPriorityQueue.maxConcurrent`, default `3`)
+- Retry with exponential backoff for transient network/server failures
+- Optional decode sizing (`targetWidth`, `targetHeight`) for large images
+- Placeholder, progress, error, and custom image builder support
+- Prefetch support through `ImageLoader.prefetch(...)`
 
-# ✨ Features
-
-• LRU **Memory Cache**  
-• **Disk Cache** with configurable expiration  
-• **Download Queue** to limit simultaneous downloads  
-• **Viewport Priority Loading** for smoother scrolling  
-• **Progressive image rendering** (low resolution preview → high resolution)  
-• **Prefetch API** for preloading images  
-• Configurable **cache duration**  
-• Optional **memory cache / disk cache control**  
-• **Rounded corner support**  
-• Custom **placeholder widget**  
-• Custom **error widget**  
-• Image **resize before decoding** for better performance
-
----
-
-# 🚀 Getting Started
-
-Add the dependency in your `pubspec.yaml`:
+## Install
 
 ```yaml
 dependencies:
-  advanced_cache_network_image: ^0.0.1
+  advanced_cache_network_image: ^0.0.3
 ```
 
-Run:
+Then run:
 
 ```bash
 flutter pub get
 ```
 
----
-
-# 📦 Usage
-
-Import the package:
+## Basic Usage
 
 ```dart
 import 'package:advanced_cache_network_image/advanced_cache_network_image.dart';
-```
 
-Basic usage:
-
-```dart
 AdvancedCacheNetworkImage(
-  url: "https://picsum.photos/400",
+  url: 'https://picsum.photos/1200/800',
+  width: 300,
+  height: 200,
+  fit: BoxFit.cover,
+  radius: 12,
 )
 ```
 
----
-
-# 📷 Full Example
+## Usage with Progress + Error UI
 
 ```dart
-import 'package:flutter/material.dart';
+AdvancedCacheNetworkImage(
+  url: 'https://picsum.photos/800/500',
+  height: 220,
+  fit: BoxFit.cover,
+  progressBuilder: (context, progress) {
+    return Center(
+      child: CircularProgressIndicator(
+        value: progress == 0 ? null : progress,
+      ),
+    );
+  },
+  errorWidget: const Center(
+    child: Icon(Icons.broken_image),
+  ),
+)
+```
+
+## Resize During Decode
+
+```dart
+AdvancedCacheNetworkImage(
+  url: 'https://picsum.photos/3840/2160',
+  targetWidth: 800,
+  targetHeight: 450,
+  fit: BoxFit.cover,
+)
+```
+
+## Prefetch Example
+
+```dart
 import 'package:advanced_cache_network_image/advanced_cache_network_image.dart';
 
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: ImageExampleScreen(),
-    );
-  }
-}
-
-class ImageExampleScreen extends StatelessWidget {
-  const ImageExampleScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Advanced Cache Network Image"),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-
-          const Text(
-            "Thumbnail (150px)",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 10),
-
-          AdvancedCacheNetworkImage(
-            url: "https://picsum.photos/150",
-            height: 200,
-            fit: BoxFit.cover,
-            radius: 16,
-          ),
-
-          const SizedBox(height: 30),
-
-          const Text(
-            "Low Resolution (640px)",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 10),
-
-          AdvancedCacheNetworkImage(
-            url: "https://picsum.photos/640/400",
-            height: 200,
-            fit: BoxFit.cover,
-            radius: 16,
-          ),
-
-          const SizedBox(height: 30),
-
-          const Text(
-            "HD Image (1280px)",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 10),
-
-          AdvancedCacheNetworkImage(
-            url: "https://picsum.photos/1280/720",
-            height: 200,
-            fit: BoxFit.cover,
-            radius: 16,
-          ),
-
-          const SizedBox(height: 30),
-
-          const Text(
-            "4K Image (3840px)",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 10),
-
-          AdvancedCacheNetworkImage(
-            url: "https://picsum.photos/3840/2160",
-            height: 200,
-            fit: BoxFit.cover,
-            radius: 16,
-            targetWidth: 400,
-            cacheDuration: const Duration(days: 7),
-            placeholder: const Center(
-              child: CircularProgressIndicator(),
-            ),
-            errorWidget: const Icon(Icons.broken_image),
-          ),
-
-          const SizedBox(height: 30),
-
-          const Text(
-            "Ultra High Resolution (4000px)",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-
-          const SizedBox(height: 10),
-
-          AdvancedCacheNetworkImage(
-            url: "https://picsum.photos/4000/3000",
-            height: 200,
-            fit: BoxFit.cover,
-            radius: 16,
-          ),
-
-          const SizedBox(height: 30),
-
-        ],
-      ),
-    );
-  }
-}
+final loader = ImageLoader();
+await loader.prefetch('https://picsum.photos/1200/800');
 ```
 
----
-
-# ⚡ Progressive Image Rendering
-
-The package improves perceived performance by rendering a preview first:
-
-```
-Download image bytes
-      ↓
-Decode small preview
-      ↓
-Display preview
-      ↓
-Decode full resolution
-      ↓
-Replace preview smoothly
-```
-
-This technique makes image-heavy feeds feel much faster.
-
----
-
-# 🔄 Prefetch Images
-
-Images can be preloaded before displaying them.
+You can also control cache manually:
 
 ```dart
-ImageLoader().prefetch("https://example.com/image.jpg");
+await loader.evict('https://picsum.photos/1200/800'); // remove one URL
+loader.clearMemoryCache(); // clear memory cache only
 ```
 
-Useful for:
+## Advanced Customization
 
-- feed scrolling
-- gallery screens
-- upcoming images
+```dart
+import 'package:advanced_cache_network_image/advanced_cache_network_image.dart';
 
----
+final loader = ImageLoader(
+  timeout: const Duration(seconds: 20),
+  maxRetries: 5,
+  baseDelay: const Duration(milliseconds: 400),
+  maxConcurrentDownloads: 6,
+);
 
-# 🧠 Performance Optimizations
+final cancelToken = CancelToken();
 
-### Memory Cache (LRU)
+AdvancedCacheNetworkImage(
+  url: 'https://example.com/image.jpg',
+  imageLoader: loader,
+  cancelToken: cancelToken,
+  useMemoryCache: true,
+  useDiskCache: true,
+  cacheDuration: const Duration(days: 3),
+);
 
-Frequently used images are stored in memory and automatically evicted when the cache limit is reached.
+// later: cancel if needed
+cancelToken.cancel();
+```
 
-### Disk Cache
+## What You Can Update
 
-Images are stored locally to avoid repeated downloads.
+### 1) Widget-level options (`AdvancedCacheNetworkImage`)
 
-### Download Queue
+- URL and rendering: `url`, `fit`, `width`, `height`, `radius`
+- Loading UI: `placeholder`, `progressBuilder`, `errorWidget`
+- Decode size: `targetWidth`, `targetHeight`
+- Animation: `enableFade`, `fadeDuration`
+- Cache usage per widget: `useMemoryCache`, `useDiskCache`, `cacheDuration`
+- Advanced wiring: `imageLoader`, `cancelToken`, `imageBuilder`
 
-Limits concurrent downloads to prevent network congestion.
+### 2) Loader-level options (`ImageLoader`)
 
-### Viewport Priority Loading
+- Network behavior: `timeout`, `maxRetries`, `baseDelay`
+- Download concurrency: `maxConcurrentDownloads`
+- Cache lifecycle:
+  - `prefetch(url)`
+  - `evict(url, memory: true, disk: true)`
+  - `clearMemoryCache()`
 
-Images visible on screen load first, improving scroll performance.
+### 3) Global queue option (`ViewportPriorityQueue`)
 
----
+- Update queue concurrency at runtime:
 
-# 📱 Example App
+```dart
+ViewportPriorityQueue.maxConcurrent = 6;
+```
 
-See the `/example` folder for a full demonstration including:
+### Practical Pattern
 
-- thumbnail images
-- low resolution images
-- HD images
-- 4K images
-- ultra high resolution images
+```dart
+final loader = ImageLoader(
+  timeout: const Duration(seconds: 20),
+  maxRetries: 4,
+  maxConcurrentDownloads: 5,
+);
 
----
+AdvancedCacheNetworkImage(
+  url: 'https://example.com/image.jpg',
+  imageLoader: loader,
+  useMemoryCache: true,
+  useDiskCache: true,
+  cacheDuration: const Duration(days: 7),
+  targetWidth: 900,
+  enableFade: true,
+);
+```
 
-# 🤝 Contributing
+## Widget Parameters
 
-Contributions, bug reports, and feature requests are welcome.
+- `url` (required): image URL
+- `fit`: `BoxFit` for rendering
+- `placeholder`: widget shown while loading
+- `progressBuilder`: builder with progress (`0.0` to `1.0`)
+- `errorWidget`: widget shown on failure
+- `width`, `height`: optional layout sizing
+- `radius`: border radius applied with `ClipRRect`
+- `targetWidth`, `targetHeight`: decode size hints
+- `cacheDuration`: disk cache expiration check (when used in file-based load flow)
+- `useMemoryCache`, `useDiskCache`: cache toggles
+- `enableFade`, `fadeDuration`: animated transitions
+- `imageBuilder`: full control over final image rendering
+- `imageLoader`: inject your own `ImageLoader` instance
+- `cancelToken`: cancel an in-flight request
 
-Feel free to open an issue or submit a pull request.
+## Notes
 
----
+- Disk cache files are stored in the platform temporary directory.
+- Memory cache is currently a simple in-memory map (no LRU eviction yet).
+- `prefetch` and low-level cache/network APIs are available from `ImageLoader`.
 
-# 📄 License
+## Troubleshooting
 
-MIT License
-# advanced-cache-network-image
+- Invalid URL
+  Cause: malformed URL, DNS issue, or non-200 server response.
+  Fix: verify the URL in a browser/Postman, ensure it starts with `http://` or `https://`, and provide an `errorWidget` to handle failures gracefully.
+- Cache seems stale
+  Cause: cached bytes are reused from memory/disk.
+  Fix: use a cache-busting query (for example `?v=timestamp`), set an appropriate `cacheDuration` in file-based flows, or clear/restart app state during development.
+- Progress stuck at indeterminate
+  Cause: server does not send `content-length`, so total size is unknown.
+  Fix: this is expected for some endpoints; keep showing indeterminate progress (`value: null`) until completion, or switch to a different endpoint/CDN that returns `content-length`.
+
+## Example App
+
+See the runnable sample in:
+
+- `example/lib/main.dart`
+- The example screen now includes a live customization panel (toggles + sliders) so you can test most settings directly.
+
+## License
+
+MIT - see `LICENSE`.
